@@ -214,6 +214,117 @@ async def get_patient(patient_id: int):
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=500, detail=error_msg)
 
+@router.put("/{patient_id}", response_model=Dict[str, Any])
+async def update_patient(patient_id: int, patient_data: PatientCreateRequest):
+    """Update an existing patient"""
+    try:
+        print(f"📝 Updating patient ID {patient_id} with data: {patient_data}")
+        logger.info(f"Updating patient ID {patient_id}")
+        
+        # Get patient service
+        patient_service = get_patient_service()
+        
+        # Convert Pydantic model to dict
+        update_dict = {
+            "name": patient_data.name,
+            "date_of_birth": patient_data.date_of_birth,
+            "diagnosis": patient_data.diagnosis,
+            "prescription": patient_data.prescription
+        }
+        
+        # Update patient using the service
+        if patient_service.db_type == "supabase":
+            # For Supabase, we need to use the SupabaseService
+            from ..services.supabase_service import SupabaseService
+            supabase_service = SupabaseService()
+            updated_patient = await supabase_service.update_patient(patient_id, update_dict)
+        else:
+            # For SQLite fallback
+            from ..database import SessionLocal
+            from ..services.database_service import DatabaseService
+            db = SessionLocal()
+            try:
+                db_service = DatabaseService(db)
+                updated_patient = db_service.update_patient(str(patient_id), update_dict)
+                if updated_patient:
+                    updated_patient = {
+                        "id": updated_patient.id,
+                        "name": updated_patient.name,
+                        "date_of_birth": updated_patient.date_of_birth,
+                        "diagnosis": updated_patient.diagnosis,
+                        "prescription": updated_patient.prescription,
+                        "created_at": updated_patient.created_at.isoformat() if updated_patient.created_at else None,
+                        "updated_at": updated_patient.updated_at.isoformat() if updated_patient.updated_at else None
+                    }
+            finally:
+                db.close()
+        
+        if not updated_patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        
+        print(f"✅ Patient updated successfully: {updated_patient}")
+        logger.info(f"Patient updated successfully with ID: {patient_id}")
+        
+        return {
+            "success": True,
+            "message": "Patient updated successfully",
+            "patient": updated_patient
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Failed to update patient: {str(e)}"
+        print(f"❌ {error_msg}")
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@router.delete("/{patient_id}", response_model=Dict[str, Any])
+async def delete_patient(patient_id: int):
+    """Delete a patient"""
+    try:
+        print(f"🗑️ Deleting patient ID {patient_id}")
+        logger.info(f"Deleting patient ID {patient_id}")
+        
+        # Get patient service
+        patient_service = get_patient_service()
+        
+        # Delete patient using the service
+        if patient_service.db_type == "supabase":
+            # For Supabase, we need to use the SupabaseService
+            from ..services.supabase_service import SupabaseService
+            supabase_service = SupabaseService()
+            success = await supabase_service.delete_patient(patient_id)
+        else:
+            # For SQLite fallback
+            from ..database import SessionLocal
+            from ..services.database_service import DatabaseService
+            db = SessionLocal()
+            try:
+                db_service = DatabaseService(db)
+                success = db_service.delete_patient(str(patient_id))
+            finally:
+                db.close()
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        
+        print(f"✅ Patient deleted successfully: ID {patient_id}")
+        logger.info(f"Patient deleted successfully with ID: {patient_id}")
+        
+        return {
+            "success": True,
+            "message": "Patient deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Failed to delete patient: {str(e)}"
+        print(f"❌ {error_msg}")
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(status_code=500, detail=error_msg)
+
 @router.get("/search/{search_term}", response_model=Dict[str, Any])
 async def search_patients(search_term: str, limit: int = 50):
     """Search patients by name or diagnosis"""
@@ -270,6 +381,7 @@ async def health_check():
         print(f"❌ {error_msg}")
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=500, detail=error_msg)
+
 @router.get("/health/check", response_model=Dict[str, Any])
 async def health_check():
     """Check database connectivity"""
