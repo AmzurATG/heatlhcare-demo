@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@layer base {
+  * {
+    @apply transition-colors duration-200 ease-in-out;
+  }
+  
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    @apply bg-healthix-dark text-white;
+  }
+
+  code {
+    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+      monospace;
+  }
+}
+
+@layer components {
+  /* Modern Button Styles */
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-6 py-3 border border-transparent text-sm font-semibold rounded-lg text-white bg-gradient-to-r from-healthix-green to-healthix-green-light hover:from-healthix-green-dark hover:to-healthix-green shadow-lg hover:shadow-glow transform hover:scale-105 transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-healthix-green focus:ring-offset-2 focus:ring-offset-healthix-dark disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none;
+  }
+  
+  .btn-secondary {
+    @apply inline-flex items-center justify-center px-6 py-3 border border-healthix-dark-lighter text-sm font-semibold rounded-lg text-healthix-gray-light bg-healthix-dark-light hover:bg-healthix-dark-lighter hover:text-white shadow-md hover:shadow-lg transform hover:scale-105 transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-healthix-green focus:ring-offset-2 focus:ring-offset-healthix-dark disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none;
+  }
+  
+  .btn-danger {
+    @apply inline-flex items-center justify-center px-6 py-3 border border-transparent text-sm font-semibold rounded-lg text-white bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 shadow-lg hover:shadow-red-500/25 transform hover:scale-105 transition-all duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-healthix-dark disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none;
+  }
+
+  /* Modern Card Styles */
+  .card-modern {
+    @apply bg-healthix-dark-light border border-healthix-dark-lighter rounded-xl shadow-dark hover:shadow-dark-lg transform hover:scale-[1.02] transition-all duration-300 ease-in-out;
+  }
+  
+  .card-glow {
+    @apply bg-healthix-dark-light border border-healthix-green/20 rounded-xl shadow-glow hover:shadow-glow-lg hover:border-healthix-green/40 transform hover:scale-[1.02] transition-all duration-300 ease-in-out;
+  }
+
+  /* Modern Input Styles */
+  .input-modern {
+    @apply w-full px-4 py-3 bg-healthix-dark-light border border-healthix-dark-lighter rounded-lg text-white placeholder-healthix-gray focus:outline-none focus:ring-2 focus:ring-healthix-green focus:border-transparent transition-all duration-300 ease-in-out;
+  }
+  
+  .textarea-modern {
+    @apply w-full px-4 py-3 bg-healthix-dark-light border border-healthix-dark-lighter rounded-lg text-white placeholder-healthix-gray focus:outline-none focus:ring-2 focus:ring-healthix-green focus:border-transparent transition-all duration-300 ease-in-out resize-none;
+  }
+
+  /* Navigation Styles */
+  .nav-link {
+    @apply px-4 py-2 rounded-lg text-sm font-medium text-healthix-gray-light hover:text-white hover:bg-healthix-dark-lighter transition-all duration-200 ease-in-out;
+  }
+  
+  .nav-link-active {
+    @apply px-4 py-2 rounded-lg text-sm font-medium text-white bg-healthix-green shadow-glow;
+  }
+
+  /* Loading Animation */
+  .loading-spinner {
+    @apply animate-spin rounded-full border-2 border-healthix-dark-lighter border-t-healthix-green;
+  }
+
+  /* Success/Error States */
+  .success-glow {
+    @apply border-healthix-green shadow-glow;
+  }
+  
+  .error-glow {
+    @apply border-red-500 shadow-red-500/25;
+  }
+
+  /* Hover Effects */
+  .hover-lift {
+    @apply transform hover:scale-105 transition-transform duration-200 ease-in-out;
+  }
+  
+  .hover-glow {
+    @apply hover:shadow-glow transition-shadow duration-300 ease-in-out;
+  }
+
+  /* Status Indicators */
+  .status-success {
+    @apply bg-healthix-green/20 text-healthix-green border border-healthix-green/30 rounded-lg px-3 py-1 text-sm font-medium;
+  }
+  
+  .status-warning {
+    @apply bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded-lg px-3 py-1 text-sm font-medium;
+  }
+  
+  .status-error {
+    @apply bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg px-3 py-1 text-sm font-medium;
+  }
+}
+
+@layer utilities {
+  /* Gradient Text */
+  .text-gradient {
+    @apply bg-gradient-to-r from-healthix-green to-healthix-green-light bg-clip-text text-transparent;
+  }
+  
+  /* Glass Effect */
+  .glass {
+    @apply bg-white/10 backdrop-blur-sm border border-white/20;
+  }
+  
+  /* Smooth Transitions */
+  .transition-smooth {
+    @apply transition-all duration-300 ease-in-out;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-healthix-dark-light;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-healthix-dark-lighter rounded-full hover:bg-healthix-green;
+}
+
+/* Selection Color */
+::selection {
+  @apply bg-healthix-green/30 text-white;
+}
+
+/* Focus Visible */
+:focus-visible {
+  @apply outline-none ring-2 ring-healthix-green ring-offset-2 ring-offset-healthix-dark;
+}

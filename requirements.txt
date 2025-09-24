@@ -1,0 +1,31 @@
+# Core FastAPI dependencies
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+
+# Database
+# sqlite3 (built-in with Python)
+
+# Data processing - use specific versions that have Windows wheels
+pandas==2.0.3
+numpy==1.24.3
+openpyxl==3.1.2
+xlrd==2.0.1
+
+# AI/ML dependencies
+google-generativeai==0.3.2
+sentence-transformers==2.2.2
+chromadb==0.4.15
+
+# Image processing
+Pillow==10.1.0
+
+# Environment management
+python-dotenv==1.0.0
+
+# Logging and utilities
+pydantic==2.5.0
+typing-extensions==4.8.0
+
+# Optional: For enhanced pandas AI functionality
+# pandasai  # Uncomment if you want to add pandas AI

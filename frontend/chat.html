@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patient Chat with File Attachments</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f7fa;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .chat-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+        }
+        
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid #e1e8ed;
+            background: #6366f1;
+            color: white;
+            border-radius: 10px 10px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .attachments-panel {
+            padding: 10px 20px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e1e8ed;
+            min-height: 40px;
+        }
+        
+        .attachment-item {
+            display: inline-block;
+            background: #e0e7ff;
+            padding: 5px 10px;
+            margin: 2px;
+            border-radius: 15px;
+            font-size: 12px;
+            color: #3730a3;
+        }
+        
+        .messages-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .message {
+            margin: 15px 0;
+            display: flex;
+        }
+        
+        .message.user {
+            justify-content: flex-end;
+        }
+        
+        .message.assistant {
+            justify-content: flex-start;
+        }
+        
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+        }
+        
+        .message.user .message-content {
+            background: #6366f1;
+            color: white;
+        }
+        
+        .message.assistant .message-content {
+            background: #f1f5f9;
+            color: #334155;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #e1e8ed;
+            background: white;
+            border-radius: 0 0 10px 10px;
+        }
+        
+        .input-container {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        
+        .message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 25px;
+            outline: none;
+            font-size: 14px;
+            resize: none;
+            min-height: 20px;
+            max-height: 100px;
+        }
+        
+        .attach-button {
+            background: #10b981;
+            color: white;
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.2s;
+        }
+        
+        .attach-button:hover {
+            background: #059669;
+            transform: scale(1.05);
+        }
+        
+        .send-button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+        
+        .send-button:hover {
+            background: #4f46e5;
+            transform: scale(1.05);
+        }
+        
+        .send-button:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .loading {
+            opacity: 0.6;
+        }
+        
+        .context-indicator {
+            color: #10b981;
+            font-size: 12px;
+        }
+        
+        .upload-progress {
+            background: #fef3c7;
+            color: #92400e;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div>
+                <h2 style="margin: 0;">Patient Chat Assistant</h2>
+                <div class="context-indicator" id="contextIndicator">
+                    No files attached
+                </div>
+            </div>
+            <div id="sessionId" style="font-size: 12px; opacity: 0.8;"></div>
+        </div>
+        
+        <div class="attachments-panel" id="attachmentsPanel">
+            <div style="font-size: 12px; color: #64748b;">Attached Files:</div>
+        </div>
+        
+        <div class="messages-area" id="messagesArea">
+            <div class="message assistant">
+                <div class="message-content">
+                    Hello! I'm your patient chat assistant. You can attach medical documents, Excel files, or any relevant files to enhance our conversation. How can I help you today?
+                </div>
+            </div>
+        </div>
+        
+        <div class="input-area">
+            <div id="uploadProgress" class="upload-progress" style="display: none;"></div>
+            <div class="input-container">
+                <input type="file" id="fileInput" class="file-input" 
+                       accept=".pdf,.jpg,.jpeg,.png,.txt,.xlsx,.xls,.csv,.tsv,.json"
+                       multiple>
+                <button class="attach-button" id="attachButton" title="Attach Files">
+                    📎
+                </button>
+                <textarea id="messageInput" class="message-input" 
+                         placeholder="Type your message..." 
+                         rows="1"></textarea>
+                <button class="send-button" id="sendButton" title="Send Message">
+                    ➤
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class ChatInterface {
+            constructor() {
+                this.chatSessionId = this.generateSessionId();
+                this.attachedFiles = [];
+                this.isUploading = false;
+                
+                this.initializeElements();
+                this.bindEvents();
+                this.updateSessionDisplay();
+            }
+            
+            generateSessionId() {
+                return 'chat_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+            }
+            
+            initializeElements() {
+                this.messagesArea = document.getElementById('messagesArea');
+                this.messageInput = document.getElementById('messageInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.attachButton = document.getElementById('attachButton');
+                this.fileInput = document.getElementById('fileInput');
+                this.attachmentsPanel = document.getElementById('attachmentsPanel');
+                this.contextIndicator = document.getElementById('contextIndicator');
+                this.uploadProgress = document.getElementById('uploadProgress');
+                this.sessionId = document.getElementById('sessionId');
+            }
+            
+            bindEvents() {
+                this.sendButton.addEventListener('click', () => this.sendMessage());
+                this.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+                this.attachButton.addEventListener('click', () => this.fileInput.click());
+                this.fileInput.addEventListener('change', (e) => this.handleFileSelection(e));
+            }
+            
+            updateSessionDisplay() {
+                this.sessionId.textContent = `Session: ${this.chatSessionId}`;
+            }
+            
+            async handleFileSelection(event) {
+                const files = event.target.files;
+                if (files.length === 0) return;
+                
+                this.isUploading = true;
+                this.showUploadProgress(`Uploading ${files.length} file(s)...`);
+                
+                try {
+                    for (let file of files) {
+                        await this.uploadFile(file);
+                    }
+                    await this.updateAttachmentsDisplay();
+                    this.hideUploadProgress();
+                } catch (error) {
+                    this.showUploadProgress(`Upload failed: ${error.message}`, true);
+                    setTimeout(() => this.hideUploadProgress(), 3000);
+                } finally {
+                    this.isUploading = false;
+                    this.fileInput.value = '';
+                }
+            }
+            
+            async uploadFile(file) {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('chat_session_id', this.chatSessionId);
+                
+                const response = await fetch('/api/documents/attach-to-chat', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to upload ${file.name}`);
+                }
+                
+                const result = await response.json();
+                this.attachedFiles.push({
+                    filename: file.name,
+                    type: result.attachment_type,
+                    size: file.size
+                });
+            }
+            
+            async updateAttachmentsDisplay() {
+                try {
+                    const response = await fetch(`/api/documents/chat-attachments/${this.chatSessionId}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.displayAttachments(data.attachments);
+                        this.updateContextIndicator(data.attachments_count);
+                    }
+                } catch (error) {
+                    console.error('Failed to update attachments display:', error);
+                }
+            }
+            
+            displayAttachments(attachments) {
+                const container = this.attachmentsPanel;
+                container.innerHTML = '<div style="font-size: 12px; color: #64748b;">Attached Files:</div>';
+                
+                attachments.forEach(att => {
+                    const item = document.createElement('div');
+                    item.className = 'attachment-item';
+                    item.textContent = `${att.metadata.filename} (${att.metadata.attachment_type})`;
+                    container.appendChild(item);
+                });
+            }
+            
+            updateContextIndicator(count) {
+                if (count > 0) {
+                    this.contextIndicator.textContent = `${count} file(s) attached - Context active`;
+                    this.contextIndicator.style.color = '#10b981';
+                } else {
+                    this.contextIndicator.textContent = 'No files attached';
+                    this.contextIndicator.style.color = '#64748b';
+                }
+            }
+            
+            showUploadProgress(message, isError = false) {
+                this.uploadProgress.textContent = message;
+                this.uploadProgress.style.display = 'block';
+                this.uploadProgress.style.background = isError ? '#fee2e2' : '#fef3c7';
+                this.uploadProgress.style.color = isError ? '#dc2626' : '#92400e';
+            }
+            
+            hideUploadProgress() {
+                this.uploadProgress.style.display = 'none';
+            }
+            
+            async sendMessage() {
+                const message = this.messageInput.value.trim();
+                if (!message || this.isUploading) return;
+                
+                this.displayMessage(message, 'user');
+                this.messageInput.value = '';
+                this.sendButton.disabled = true;
+                
+                try {
+                    const response = await fetch('/api/chat/message', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            message: message,
+                            chat_session_id: this.chatSessionId
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to get response');
+                    }
+                    
+                    const data = await response.json();
+                    this.displayMessage(data.message, 'assistant');
+                    
+                } catch (error) {
+                    this.displayMessage('Sorry, I encountered an error. Please try again.', 'assistant');
+                    console.error('Chat error:', error);
+                } finally {
+                    this.sendButton.disabled = false;
+                }
+            }
+            
+            displayMessage(content, sender) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${sender}`;
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                contentDiv.textContent = content;
+                
+                messageDiv.appendChild(contentDiv);
+                this.messagesArea.appendChild(messageDiv);
+                this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
+            }
+        }
+        
+        // Initialize chat interface when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ChatInterface();
+        });
+    </script>
+</body>
+</html>
