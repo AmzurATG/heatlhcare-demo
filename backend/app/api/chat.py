@@ -16,14 +16,26 @@ chat_sessions = {}
 
 @router.post("/start-session")
 async def start_chat_session():
-    """Start a new chat session"""
+    """Start a new chat session with patient context loaded"""
     session_id = str(uuid.uuid4())
+    # Fetch patient context immediately on session creation
+    patient_service = get_patient_service()
+    try:
+        patients = await patient_service.get_all_patients(limit=10)
+        if patients:
+            patient_context_text = _format_patients_for_chat(patients)
+        else:
+            patient_context_text = "No patient data available in the database."
+    except Exception as e:
+        logger.error(f"Error fetching patients for session init: {str(e)}")
+        patient_context_text = "No patient data available in the database."
+
     chat_sessions[session_id] = {
         "created_at": datetime.now(),
         "messages": [],
-        "files": []
+        "files": [],
+        "patient_context": patient_context_text  # Store patient context in session
     }
-    
     return {"session_id": session_id}
 
 @router.post("/chat")
@@ -34,29 +46,48 @@ async def chat_with_context(
 ):
     """Chat with AI using patient database context"""
     try:
+        # If session does not exist, create a new one and fetch patient context
         if session_id not in chat_sessions:
-            raise HTTPException(status_code=404, detail="Chat session not found")
+            logger.warning(f"Session not found: {session_id}. Creating new session automatically.")
+            patient_service = get_patient_service()
+            try:
+                patients = await patient_service.get_all_patients(limit=10)
+                if patients:
+                    patient_context_text = _format_patients_for_chat(patients)
+                else:
+                    patient_context_text = "No patient data available in the database."
+            except Exception as e:
+                logger.error(f"Error fetching patients for session init: {str(e)}")
+                patient_context_text = "No patient data available in the database."
+            chat_sessions[session_id] = {
+                "created_at": datetime.now(),
+                "messages": [],
+                "files": [],
+                "patient_context": patient_context_text
+            }
         
-        # Get patient service and context
         patient_service = get_patient_service()
         gemini_service = GeminiService()
-        
-        # Get patient context from database
-        patients = await patient_service.get_all_patients(limit=10)
-        
-        # Format patient context for AI
-        if patients:
-            patient_context_text = _format_patients_for_chat(patients)
-        else:
-            patient_context_text = "No patient data available in the database."
-        
-        # Get any attached files context from session
+
         session = chat_sessions[session_id]
+        patient_context_text = session.get("patient_context")
+        if not patient_context_text:
+            try:
+                patients = await patient_service.get_all_patients(limit=10)
+                if patients:
+                    patient_context_text = _format_patients_for_chat(patients)
+                else:
+                    patient_context_text = "No patient data available in the database."
+                session["patient_context"] = patient_context_text
+            except Exception as db_err:
+                logger.error(f"Error fetching patients: {db_err}")
+                patient_context_text = "No patient data available in the database."
+
         files_context = ""
         if session.get("files"):
             # Process files if any (implement file processing if needed)
             pass
-        
+
         # Combine contexts
         full_context = f"""
 PATIENT DATABASE CONTEXT:
@@ -68,25 +99,29 @@ ADDITIONAL CONTEXT:
 FILES CONTEXT:
 {files_context or "No additional files attached."}
         """
-        
-        # Generate AI response
-        response = await gemini_service.chat_with_context(query, full_context)
-        
-        # Store in session
+
+        try:
+            response = await gemini_service.chat_with_context(query, full_context)
+        except Exception as ai_err:
+            logger.error(f"Gemini service error: {ai_err}")
+            raise HTTPException(status_code=500, detail=f"AI service error: {ai_err}")
+
         session["messages"].append({
             "query": query,
             "response": response,
             "timestamp": datetime.now()
         })
-        
+
         return {
             "response": response,
-            "patients_available": len(patients),
-            "has_context": bool(patients)
+            "patients_available": patient_context_text.count("PATIENT") if patient_context_text else 0,
+            "has_context": bool(patient_context_text and "No patient data" not in patient_context_text)
         }
-        
+
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}")
+        logger.error(f"Chat error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 @router.post("/upload-file")
