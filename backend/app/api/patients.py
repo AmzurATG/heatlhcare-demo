@@ -382,21 +382,173 @@ async def health_check():
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=500, detail=error_msg)
 
-@router.get("/health/check", response_model=Dict[str, Any])
-async def health_check():
-    """Check database connectivity"""
+@router.get("/context/chat", response_model=Dict[str, Any])
+async def get_patients_for_chat_context(
+    patient_ids: Optional[str] = None,  # Comma-separated patient IDs
+    limit: int = 10,
+    include_recent: bool = True
+):
+    """Get patient data formatted for chat context"""
     try:
         patient_service = get_patient_service()
-        is_connected = await patient_service.test_connection()
+        
+        # Parse patient IDs if provided
+        specific_patient_ids = None
+        if patient_ids:
+            try:
+                specific_patient_ids = [int(pid.strip()) for pid in patient_ids.split(',')]
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid patient IDs format")
+        
+        # Get patients based on criteria
+        if specific_patient_ids:
+            patients = []
+            for patient_id in specific_patient_ids:
+                patient = await patient_service.get_patient_by_id(patient_id)
+                if patient:
+                    patients.append(patient)
+        else:
+            # Get recent patients or all patients up to limit
+            patients = await patient_service.get_all_patients(limit)
+            if include_recent and patients:
+                # Sort by created_at or updated_at if available
+                patients = sorted(patients, key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        # Format for chat context
+        context_text = _format_patients_for_chat(patients)
         
         return {
             "success": True,
-            "database_connected": is_connected,
-            "database_type": patient_service.db_type
+            "context": context_text,
+            "patients_count": len(patients),
+            "patient_summaries": [
+                {
+                    "id": p.get('id'),
+                    "name": p.get('name'),
+                    "diagnosis": p.get('diagnosis', 'Not specified')
+                }
+                for p in patients
+            ]
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        error_msg = f"Health check failed: {str(e)}"
+        error_msg = f"Failed to retrieve patient context: {str(e)}"
+        print(f"❌ {error_msg}")
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+def _format_patients_for_chat(patients: List[Dict[str, Any]]) -> str:
+    """Format patient data for use as chat context"""
+    if not patients:
+        return "No patient data available."
+    
+    context_parts = ["=== PATIENT DATABASE CONTEXT ===\n"]
+    
+    for i, patient in enumerate(patients, 1):
+        context_parts.append(f"PATIENT {i}:")
+        context_parts.append(f"- ID: {patient.get('id', 'Unknown')}")
+        context_parts.append(f"- Name: {patient.get('name', 'Unknown')}")
+        context_parts.append(f"- Date of Birth: {patient.get('date_of_birth', 'Not specified')}")
+        context_parts.append(f"- Diagnosis: {patient.get('diagnosis', 'Not specified')}")
+        context_parts.append(f"- Prescription: {patient.get('prescription', 'Not specified')}")
+        
+        if patient.get('confidence_score'):
+            context_parts.append(f"- Confidence Score: {patient.get('confidence_score')}")
+        
+        if patient.get('raw_text'):
+            # Truncate raw text if too long
+            raw_text = patient.get('raw_text', '')[:500]
+            if len(patient.get('raw_text', '')) > 500:
+                raw_text += "... [truncated]"
+            context_parts.append(f"- Additional Notes: {raw_text}")
+        
+        context_parts.append("")  # Empty line between patients
+    
+    context_parts.append("=== END PATIENT CONTEXT ===")
+    
+    return "\n".join(context_parts)
+
+@router.post("/context/chat-query", response_model=Dict[str, Any])
+async def chat_with_patient_context(
+    query: str = Form(...),
+    patient_ids: Optional[str] = Form(None),  # Comma-separated patient IDs
+    files: List[UploadFile] = File(None),
+    include_all_patients: bool = Form(False),
+    max_patients: int = Form(5)
+):
+    """Chat with AI using patient data as context, optionally with additional documents"""
+    try:
+        print(f"💬 Chat query with patient context: {query[:100]}...")
+        logger.info(f"Chat query received with patient context")
+        
+        # Get patient context
+        patient_service = get_patient_service()
+        gemini_service = GeminiService()
+        
+        # Determine which patients to include
+        patients = []
+        if patient_ids:
+            # Specific patients requested
+            try:
+                specific_patient_ids = [int(pid.strip()) for pid in patient_ids.split(',')]
+                for patient_id in specific_patient_ids:
+                    patient = await patient_service.get_patient_by_id(patient_id)
+                    if patient:
+                        patients.append(patient)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid patient IDs format")
+        elif include_all_patients:
+            # Include recent patients
+            patients = await patient_service.get_all_patients(max_patients)
+        
+        # Format patient context
+        patient_context = _format_patients_for_chat(patients)
+        
+        # Process any uploaded files for additional context
+        additional_context = ""
+        if files and files[0].filename:  # Check if actual files were uploaded
+            files_data = []
+            for file in files:
+                if file.filename:
+                    content = await file.read()
+                    files_data.append({
+                        'content': content,
+                        'name': file.filename,
+                        'type': file.content_type or 'application/octet-stream'
+                    })
+            
+            if files_data:
+                # Extract text from documents for context
+                additional_context = await gemini_service.extract_text_for_context(files_data)
+        
+        # Combine contexts
+        full_context = patient_context
+        if additional_context:
+            full_context += f"\n\n=== ADDITIONAL DOCUMENT CONTEXT ===\n{additional_context}"
+        
+        # Generate response using Gemini
+        response = await gemini_service.chat_with_context(query, full_context)
+        
+        print(f"✅ Chat response generated successfully")
+        logger.info(f"Chat response generated for query about {len(patients)} patients")
+        
+        return {
+            "success": True,
+            "response": response,
+            "context_summary": {
+                "patients_included": len(patients),
+                "patient_names": [p.get('name', 'Unknown') for p in patients],
+                "has_document_context": bool(additional_context),
+                "document_count": len(files_data) if 'files_data' in locals() else 0
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Failed to process chat query: {str(e)}"
         print(f"❌ {error_msg}")
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=500, detail=error_msg)
