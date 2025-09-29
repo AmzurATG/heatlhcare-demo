@@ -1,5 +1,4 @@
 import google.generativeai as genai
-from google import genai as google_client
 import os
 from typing import Dict, Any, Optional, List
 import json
@@ -11,6 +10,8 @@ import mimetypes
 import tempfile
 import shutil
 import re
+
+from .file_cache_service import file_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +30,18 @@ class GeminiService:
         if not api_key:
             raise ValueError("GEMINI_API_KEY must be set in environment variables")
         
-        genai.configure(api_key=api_key)  # type: ignore[attr-defined]
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')  # type: ignore[attr-defined]
-        # Use the google.genai client for file uploads (like in main.py)
-        self.client = google_client.Client(api_key=api_key)
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
     
-    async def extract_patient_data(self, file_content: bytes, file_type: str) -> Dict[str, Any]:
-        """Extract patient data from uploaded document"""
+    async def extract_patient_data(self, file_content: bytes, file_type: str, filename: str = "document") -> Dict[str, Any]:
+        """Extract patient data from uploaded document with caching"""
         try:
+            # Check cache first
+            cached_result = file_cache_service.get_cached_file_analysis(file_content, filename)
+            if cached_result:
+                print(f"🎯 Using cached analysis for: {filename}")
+                return cached_result
+            
             print(f"🔍 Processing document of type: {file_type}, size: {len(file_content)} bytes")
             logger.info(f"Processing document of type: {file_type}, size: {len(file_content)} bytes")
             
@@ -135,27 +140,15 @@ class GeminiService:
                     with open(pdf_path, 'wb') as f:
                         f.write(file_content)
                     
-                    # Upload to Gemini - use 'file' parameter instead of 'path'
-                    uploaded_file = self.client.files.upload(
-                        file=pdf_path,
-                        config={"mime_type": "application/pdf"}
-                    )
+                    # Upload to Gemini using official API
+                    uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
                     
-                    # Generate content using uploaded file with proper message structure
-                    resp_obj = self.client.models.generate_content(
-                        model="gemini-2.0-flash-exp",
-                        contents=[
-                            {"role": "user", "parts": [
-                                {"file_data": {"mime_type": uploaded_file.mime_type, "file_uri": uploaded_file.uri}},
-                                {"text": prompt}
-                            ]}
-                        ]
-                    )
-                    response = resp_obj.text or ""
+                    # Generate content using uploaded file
+                    response = self.model.generate_content([prompt, uploaded_file])
+                    response = response.text or ""
                     
                 finally:
                     # Clean up temp file
-                    import shutil
                     if os.path.exists(temp_dir):
                         shutil.rmtree(temp_dir)
             else:
@@ -186,6 +179,9 @@ class GeminiService:
             parsed_data = self._parse_response(response)
             print(f"✅ Parsed patient data: {parsed_data}")
             logger.info(f"Parsed patient data: {parsed_data}")
+            
+            # Cache the result
+            file_cache_service.cache_file_analysis(file_content, filename, parsed_data)
             
             return parsed_data
             
@@ -239,13 +235,10 @@ class GeminiService:
                 with open(file_path, 'wb') as f:
                     f.write(file_content)
                 
-                # Upload to Gemini
+                # Upload to Gemini using official API
                 print(f"🔄 Uploading {file_name} to Gemini...")
                 try:
-                    uploaded_file = self.client.files.upload(
-                        file=file_path, 
-                        config={"mime_type": mime_type}
-                    )
+                    uploaded_file = genai.upload_file(file_path, mime_type=mime_type)
                     uploaded_files.append(uploaded_file)
                     print(f"✅ Successfully uploaded {file_name}")
                 except Exception as upload_error:
@@ -351,25 +344,12 @@ class GeminiService:
             print(f"Number of files uploaded: {len(uploaded_files)}")
             logger.info(f"Sending {len(uploaded_files)} files to Gemini for processing")
             
-            # Generate content using all uploaded files with proper message structure
-            user_parts = []
-            for uploaded_file in uploaded_files:
-                user_parts.append({
-                    "file_data": {
-                        "mime_type": uploaded_file.mime_type, 
-                        "file_uri": uploaded_file.uri
-                    }
-                })
-            user_parts.append({"text": prompt})
+            # Generate content using all uploaded files with official API
+            content_parts = [prompt] + uploaded_files
             
-            resp_obj = self.client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[
-                    {"role": "user", "parts": user_parts}
-                ]
-            )
+            response = self.model.generate_content(content_parts)
+            response_text = response.text or ""
             
-            response_text = resp_obj.text or ""
             print("=== 🤖 FULL LLM RESPONSE ===")
             print(response_text)
             print("=== 🏁 END LLM RESPONSE ===")
@@ -720,23 +700,19 @@ class GeminiService:
 
     async def _process_attached_files_optimized(self, files: List[Dict[str, Any]]) -> str:
         """Process attached files with optimization and caching"""
-        from .chat_context_service import chat_context_service
-        
         context_parts = []
         
         for file_data in files:
             try:
-                file_id = file_data.get('file_id', str(hash(file_data.get('name', ''))))
-                
-                # Check if we already processed this file
-                cached_summary = chat_context_service.get_cached_file_summary(file_id)
-                if cached_summary:
-                    context_parts.append(cached_summary)
-                    continue
-                
                 file_content = file_data.get('content')
                 file_name = file_data.get('name', 'unknown_file')
                 file_type = file_data.get('type', 'application/octet-stream')
+                
+                # Check cache first for summary
+                cached_summary = file_cache_service.get_cached_summary(file_content, file_name)
+                if cached_summary:
+                    context_parts.append(cached_summary)
+                    continue
                 
                 print(f"📎 Processing attached file: {file_name} ({file_type})")
                 logger.info(f"Processing attached file: {file_name} ({file_type})")
@@ -756,7 +732,7 @@ class GeminiService:
                     content = f"File '{file_name}' - {file_type} - Processing available on request."
                 
                 # Cache the processed content
-                chat_context_service.cache_file_summary(file_id, content)
+                file_cache_service.cache_summary(file_content, file_name, content)
                 context_parts.append(content)
                 
             except Exception as e:
@@ -777,14 +753,14 @@ class GeminiService:
                 tmp_file.write(file_content)
                 tmp_file_path = tmp_file.name
             
-            # Read only first 1000 rows for faster processing
+            # Read only first 100 rows for faster processing
             try:
-                df = pd.read_excel(tmp_file_path, nrows=1000)
+                df = pd.read_excel(tmp_file_path, nrows=100)
             except Exception:
                 try:
-                    df = pd.read_excel(tmp_file_path, engine='openpyxl', nrows=1000)
+                    df = pd.read_excel(tmp_file_path, engine='openpyxl', nrows=100)
                 except Exception:
-                    df = pd.read_excel(tmp_file_path, engine='xlrd', nrows=1000)
+                    df = pd.read_excel(tmp_file_path, engine='xlrd', nrows=100)
             
             # Clean up temp file
             os.unlink(tmp_file_path)
@@ -876,11 +852,8 @@ class GeminiService:
             with open(pdf_path, 'wb') as f:
                 f.write(file_content)
             
-            # Upload to Gemini
-            uploaded_file = self.client.files.upload(
-                file=pdf_path,
-                config={"mime_type": "application/pdf"}
-            )
+            # Upload to Gemini using official API
+            uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
             
             prompt = f"""
             Analyze this PDF document '{file_name}' and provide a concise summary in 2-3 sentences.
@@ -890,26 +863,17 @@ class GeminiService:
             """
             
             # Generate content using uploaded file
-            resp_obj = self.client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[
-                    {"role": "user", "parts": [
-                        {"file_data": {"mime_type": uploaded_file.mime_type, "file_uri": uploaded_file.uri}},
-                        {"text": prompt}
-                    ]}
-                ]
-            )
-            
-            response = resp_obj.text or ""
+            response = self.model.generate_content([prompt, uploaded_file])
+            response_text = response.text or ""
             
             # Clean up
             shutil.rmtree(temp_dir)
             
             # Truncate for optimization
-            if len(response) > 500:
-                response = response[:500] + "... [truncated for performance]"
+            if len(response_text) > 500:
+                response_text = response_text[:500] + "... [truncated for performance]"
             
-            return f"📄 {file_name}: {response}"
+            return f"📄 {file_name}: {response_text}"
             
         except Exception as e:
             return f"PDF file '{file_name}': Error - {str(e)}"
@@ -1077,11 +1041,8 @@ class GeminiService:
             with open(pdf_path, 'wb') as f:
                 f.write(file_content)
             
-            # Upload to Gemini
-            uploaded_file = self.client.files.upload(
-                file=pdf_path,
-                config={"mime_type": "application/pdf"}
-            )
+            # Upload to Gemini using official API
+            uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
             
             prompt = f"""
             Analyze this PDF document '{file_name}' and extract all relevant information.
@@ -1090,34 +1051,17 @@ class GeminiService:
             """
             
             # Generate content using uploaded file
-            resp_obj = self.client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[
-                    {"role": "user", "parts": [
-                        {"file_data": {"mime_type": uploaded_file.mime_type, "file_uri": uploaded_file.uri}},
-                        {"text": prompt}
-                    ]}
-                ]
-            )
-            
-            response = resp_obj.text or ""
+            response = self.model.generate_content([prompt, uploaded_file])
+            response_text = response.text or ""
             
             # Clean up
             shutil.rmtree(temp_dir)
             
-            return f"📄 PDF File: {file_name}\nContent: {response}"
+            return f"📄 PDF File: {file_name}\nContent: {response_text}"
             
         except Exception as e:
             return f"Error processing PDF file '{file_name}': {str(e)}"
 
-    async def _process_text_file(self, file_content: bytes, file_name: str) -> str:
-        """Process text file"""
-        try:
-            content_str = file_content.decode('utf-8', errors='ignore')
-            return f"📝 Text File: {file_name}\nContent:\n{content_str}"
-        except Exception as e:
-            return f"Error processing text file '{file_name}': {str(e)}"
-    
     async def _process_image_file_chat(self, file_content: bytes, file_name: str, file_type: str) -> str:
         """Process image file using Gemini Vision for chat context"""
         try:
@@ -1146,11 +1090,8 @@ class GeminiService:
             with open(pdf_path, 'wb') as f:
                 f.write(file_content)
             
-            # Upload to Gemini
-            uploaded_file = self.client.files.upload(
-                file=pdf_path,
-                config={"mime_type": "application/pdf"}
-            )
+            # Upload to Gemini using official API
+            uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
             
             prompt = f"""
             Analyze this PDF document '{file_name}' and extract all relevant information.
@@ -1159,33 +1100,88 @@ class GeminiService:
             """
             
             # Generate content using uploaded file
-            resp_obj = self.client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[
-                    {"role": "user", "parts": [
-                        {"file_data": {"mime_type": uploaded_file.mime_type, "file_uri": uploaded_file.uri}},
-                        {"text": prompt}
-                    ]}
-                ]
-            )
-            
-            response = resp_obj.text or ""
+            response = self.model.generate_content([prompt, uploaded_file])
+            response_text = response.text or ""
             
             # Clean up
             shutil.rmtree(temp_dir)
             
-            return f"📄 PDF File: {file_name}\nContent: {response}"
+            return f"📄 PDF File: {file_name}\nContent: {response_text}"
             
         except Exception as e:
             return f"Error processing PDF file '{file_name}': {str(e)}"
 
-    async def _process_text_file_chat(self, file_content: bytes, file_name: str) -> str:
-        """Process text file for chat context"""
+    # Add new methods for chat context functionality
+    async def extract_text_for_context(self, files_data: List[Dict[str, Any]]) -> str:
+        """Extract text from documents for use as chat context"""
         try:
-            content_str = file_content.decode('utf-8', errors='ignore')
-            # Limit text length for context
-            if len(content_str) > 5000:
-                content_str = content_str[:5000] + "... [truncated]"
-            return f"📝 Text File: {file_name}\nContent:\n{content_str}"
+            context_parts = []
+            
+            for file_data in files_data:
+                file_content = file_data['content']
+                file_name = file_data.get('name', 'document')
+                file_type = file_data.get('type', 'application/octet-stream')
+                
+                if file_type == 'application/pdf':
+                    # Create temp file for PDF
+                    temp_dir = tempfile.mkdtemp()
+                    try:
+                        pdf_path = os.path.join(temp_dir, file_name)
+                        with open(pdf_path, 'wb') as f:
+                            f.write(file_content)
+                        
+                        # Upload to Gemini
+                        uploaded_file = genai.upload_file(pdf_path, mime_type="application/pdf")
+                        
+                        # Extract text
+                        prompt = "Extract all text content from this document. Focus on textual information and data values."
+                        response = self.model.generate_content([prompt, uploaded_file])
+                        context_parts.append(f"Document: {file_name}\n{response.text}")
+                        
+                    finally:
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir)
+                            
+                elif file_type.startswith('image/'):
+                    # Process image
+                    image = Image.open(io.BytesIO(file_content))
+                    prompt = "Extract all visible text and information from this image."
+                    response = self._generate_content_with_image(prompt, image)
+                    context_parts.append(f"Image: {file_name}\n{response}")
+                    
+                else:
+                    # Try to decode as text
+                    try:
+                        text_content = file_content.decode('utf-8', errors='ignore')
+                        context_parts.append(f"Text file: {file_name}\n{text_content}")
+                    except Exception:
+                        context_parts.append(f"File: {file_name} - Could not extract text content")
+            
+            return "\n\n".join(context_parts)
+            
         except Exception as e:
-            return f"Error processing text file '{file_name}': {str(e)}"
+            logger.error(f"Error extracting text for context: {str(e)}")
+            return f"Error processing documents: {str(e)}"
+
+    async def chat_with_context(self, query: str, context: str) -> str:
+        """Generate chat response using provided context"""
+        try:
+            prompt = f"""
+            You are a helpful medical assistant. Use the provided context to answer the user's question.
+            
+            Context:
+            {context}
+            
+            User Question: {query}
+            
+            Please provide a helpful, accurate response based on the context provided. 
+            If the context doesn't contain enough information to fully answer the question, please say so.
+            Keep your response clear, professional, and focused on healthcare information.
+            """
+            
+            response = self.model.generate_content(prompt)
+            return response.text or "I'm sorry, I couldn't generate a response."
+            
+        except Exception as e:
+            logger.error(f"Error in chat with context: {str(e)}")
+            return "I'm sorry, I encountered an error while processing your request."

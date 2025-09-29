@@ -42,7 +42,7 @@ def startup():
     else:
         print("📁 Using local SQLite fallback")
 
-# Include routers
+# Include API routers
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(patients.router, prefix="/api/patients", tags=["patients"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])

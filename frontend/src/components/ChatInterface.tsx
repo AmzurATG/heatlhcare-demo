@@ -57,6 +57,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [cacheStats, setCacheStats] = useState<any>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,7 +71,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
     scrollToBottom();
     // Only initialize chat session if we don't have one already
     if (!sessionId) {
-      initializeChatSession();
+      initializeChatSessionWithPatientContext();
     }
   }, [messages]); // Remove sessionId from dependencies to prevent re-initialization
 
@@ -99,6 +100,52 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
       }
     } catch (error) {
       console.error('Failed to initialize chat session:', error);
+    }
+  };
+
+  // Enhanced initialization that loads patient context
+  const initializeChatSessionWithPatientContext = async () => {
+    // Check if we already have a session in localStorage
+    const existingSessionId = localStorage.getItem('chat_session_id');
+    
+    if (existingSessionId) {
+      setSessionId(existingSessionId);
+      await fetchAttachedFiles(existingSessionId);
+      await loadPatientSummary();
+      return;
+    }
+
+    try {
+      const sessionResponse = await chatApi.startChatSession();
+      const newSessionId = sessionResponse.session_id;
+      setSessionId(newSessionId);
+      localStorage.setItem('chat_session_id', newSessionId);
+      await loadPatientSummary();
+    } catch (error) {
+      console.error('Failed to initialize chat session:', error);
+    }
+  };
+
+  const loadPatientSummary = async () => {
+    try {
+      const contextResponse = await chatApi.getPatientContext(undefined, 5);
+      
+      if (contextResponse.success && contextResponse.patients_count > 0) {
+        const summaryMessage: Message = {
+          id: 'patient-summary',
+          text: `📊 **Database Ready**: I have access to ${contextResponse.patients_count} patient records. You can ask me questions like:\n\n• "Show me patients with diabetes"\n• "What medications is John Smith taking?"\n• "List recent patients"\n• "Find patients born after 1990"\n\n💡 Upload additional files for enhanced analysis!`,
+          isUser: false,
+          timestamp: new Date(),
+        };
+        
+        setMessages(prev => {
+          // Replace existing welcome message or add if none
+          const filtered = prev.filter(m => m.id !== '1');
+          return [summaryMessage, ...filtered];
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load patient summary:', error);
     }
   };
 
@@ -176,15 +223,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
         formData.append('session_id', sessionId || '');
         formData.append('file', file);
 
+        // Use the correct endpoint that matches our backend
         const response = await fetch('/api/chat/upload-file', {
           method: 'POST',
           body: formData,
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to upload ${file.name}`);
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Failed to upload ${file.name}`);
         }
 
+        const result = await response.json();
+        
         // Refresh attached files list
         await fetchAttachedFiles();
         
@@ -203,7 +254,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
         
         const errorMessage: Message = {
           id: Date.now().toString(),
-          text: `❌ Failed to upload **${file.name}**. Please try again.`,
+          text: `❌ Failed to upload **${file.name}**: ${error instanceof Error ? error.message : 'Unknown error'}`,
           isUser: false,
           timestamp: new Date()
         };
@@ -258,7 +309,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
     } else if (fileType.includes('excel') || fileName.endsWith('.xlsx') || fileName.endsWith('.xls') || fileType === 'text/csv') {
       return (
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2 2z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" />
         </svg>
       );
@@ -304,91 +355,77 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
       // Always ensure we have a session
       let currentSessionId = sessionId;
       if (!currentSessionId) {
-        await initializeChatSession();
-        currentSessionId = sessionId;
-      }
-
-      // Use the file-aware chat API if we have a session and files
-      if (currentSessionId && attachedFiles.length > 0) {
-        const formData = new FormData();
-        formData.append('session_id', currentSessionId);
-        formData.append('query', messageText);
-        formData.append('patient_context', 'Patient data context available.');
-
-        const response = await fetch('/api/chat/chat', {
+        const sessionResponse = await fetch('/api/chat/start-session', {
           method: 'POST',
-          body: formData,
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to get response from chat API');
-        }
-
-        const data = await response.json();
         
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: data.response,
-          isUser: false,
-          timestamp: new Date(),
-        };
-
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        // Use chat API for simple conversation without files
-        if (!currentSessionId) {
-          // Create a temporary session for the conversation
-          const sessionResponse = await fetch('/api/chat/start-session', {
-            method: 'POST',
-          });
-          
-          if (sessionResponse.ok) {
-            const sessionData = await sessionResponse.json();
-            currentSessionId = sessionData.session_id;
-            setSessionId(currentSessionId);
-            if (currentSessionId) {
-              localStorage.setItem('chat_session_id', currentSessionId);
-            }
+        if (sessionResponse.ok) {
+          const sessionData = await sessionResponse.json();
+          currentSessionId = sessionData.session_id;
+          setSessionId(currentSessionId);
+          if (currentSessionId) {
+            localStorage.setItem('chat_session_id', currentSessionId);
           }
         }
-
-        // Ensure we have a valid session ID
-        if (!currentSessionId) {
-          throw new Error('Unable to create chat session');
-        }
-
-        // Use the chat endpoint with empty context
-        const formData = new FormData();
-        formData.append('session_id', currentSessionId);
-        formData.append('query', messageText);
-        formData.append('patient_context', 'No specific patient data provided.');
-
-        const response = await fetch('/api/chat/chat', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to get response from chat API');
-        }
-
-        const data = await response.json();
-        
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: data.response,
-          isUser: false,
-          timestamp: new Date(),
-        };
-
-        setMessages(prev => [...prev, assistantMessage]);
       }
+
+      if (!currentSessionId) {
+        throw new Error('Unable to create chat session');
+      }
+
+      // Use enhanced chat endpoint if files are attached, regular chat otherwise
+      const endpoint = attachedFiles.length > 0 ? '/api/chat/chat-enhanced' : '/api/chat/chat';
+      
+      const formData = new FormData();
+      formData.append('session_id', currentSessionId);
+      formData.append('query', messageText);
+      formData.append('patient_context', 'Patient data available in database.');
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to get response from chat API');
+      }
+
+      const data = await response.json();
+      
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: data.response,
+        isUser: false,
+        timestamp: new Date(),
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+
+      // Add context info if available
+      if (data.patients_available > 0 || data.files_processed > 0) {
+        const contextInfo = [];
+        if (data.patients_available > 0) {
+          contextInfo.push(`${data.patients_available} patients`);
+        }
+        if (data.files_processed > 0) {
+          contextInfo.push(`${data.files_processed} files`);
+        }
+        
+        // Update cache stats if available
+        if (data.cache_stats) {
+          setCacheStats(data.cache_stats);
+        }
+        // Remove context message from chat UI
+        // (No message added to messages array)
+      }
+
     } catch (error) {
       console.error('Error sending message:', error);
       
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: 'Sorry, I encountered an error while processing your request. Please try again.',
+        text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
         isUser: false,
         timestamp: new Date(),
       };
@@ -419,7 +456,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '' }) => {
             </div>
             <div>
               <h2 className="text-xl font-semibold text-white">Patient Data Chat</h2>
-              <p className="text-healthix-gray-light text-sm">Ask questions about your patient records</p>
+              <p className="text-healthix-gray-light text-sm">
+                Ask questions about your patient records
+                {cacheStats && (
+                  <span className="ml-2 text-xs bg-healthix-green/20 px-2 py-1 rounded">
+                    Cache: {cacheStats.processed_files_count} files
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           

@@ -134,6 +134,64 @@ export const chatApi = {
   refreshKnowledgeBase: async (): Promise<void> => {
     await api.post('/api/chat/refresh-knowledge-base');
   },
+
+  // Add new methods for patient-aware chat
+  sendMessageWithPatientContext: async (
+    sessionId: string, 
+    query: string, 
+    files?: File[]
+  ): Promise<any> => {
+    const formData = new FormData();
+    formData.append('session_id', sessionId);
+    formData.append('query', query);
+    formData.append('include_all_patients', 'true');
+    formData.append('max_patients', '10');
+    
+    if (files && files.length > 0) {
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+    }
+
+    const response = await fetch('/api/patients/context/chat-query', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to get chat response');
+    }
+
+    return response.json();
+  },
+
+  getPatientContext: async (patientIds?: string[], limit: number = 10): Promise<any> => {
+    const params = new URLSearchParams();
+    if (patientIds && patientIds.length > 0) {
+      params.append('patient_ids', patientIds.join(','));
+    }
+    params.append('limit', limit.toString());
+    params.append('include_recent', 'true');
+
+    const response = await fetch(`/api/patients/context/chat?${params}`);
+    if (!response.ok) {
+      throw new Error('Failed to get patient context');
+    }
+
+    return response.json();
+  },
+
+  startChatSession: async (): Promise<{ session_id: string }> => {
+    const response = await fetch('/api/chat/start-session', {
+      method: 'POST',
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to start chat session');
+    }
+
+    return response.json();
+  },
 };
 
 export default api;
